@@ -1,8 +1,11 @@
 """
-Leadzai — Tracking Monitor
-==========================
-Deteta script adviocdn carregado via GTM.
-Agora com suporte a consentimento de cookies.
+Leadzai — Tracking Monitor (FINAL)
+=================================
+✔ Suporta GTM + Consent Mode
+✔ Aceita cookies automaticamente
+✔ Faz reload após consentimento (CRÍTICO)
+✔ Deteta tracking via network + DOM
+✔ Minimiza falsos negativos
 """
 
 import csv
@@ -67,7 +70,7 @@ def get_urls():
 
 
 # ---------------------------------------------------------------------------
-# 🍪 COOKIE CONSENT
+# COOKIE CONSENT
 # ---------------------------------------------------------------------------
 def accept_cookies(page):
     try:
@@ -91,7 +94,7 @@ def accept_cookies(page):
             except:
                 continue
 
-        # fallback JS
+        # fallback JS (CMPs comuns)
         page.evaluate("""
             () => {
                 if (window.Cookiebot) {
@@ -135,15 +138,19 @@ def check_site(browser, url):
     page.on("request", handle_request)
 
     try:
+        # 1. primeira navegação
         page.goto(url, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
 
-        # 👉 aceitar cookies
+        # 2. aceitar cookies
         accept_cookies(page)
 
-        # pequena espera após consentimento
+        # 3. pequena espera
         page.wait_for_timeout(2000)
 
-        # esperar GTM
+        # 🔥 4. reload após consentimento (CRÍTICO)
+        page.reload(wait_until="domcontentloaded")
+
+        # 5. esperar GTM após reload
         try:
             page.wait_for_function(
                 "() => window.google_tag_manager && Object.keys(window.google_tag_manager).length > 0",
@@ -153,10 +160,10 @@ def check_site(browser, url):
         except PlaywrightTimeout:
             pass
 
-        # esperar triggers
+        # 6. esperar triggers do GTM
         page.wait_for_timeout(POST_GTM_WAIT)
 
-        # fallback DOM check
+        # 7. fallback DOM check
         if not found:
             scripts = page.query_selector_all("script[src]")
             for s in scripts:
