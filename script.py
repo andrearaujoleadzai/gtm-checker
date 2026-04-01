@@ -1,11 +1,12 @@
 """
-Leadzai — Tracking Monitor (FINAL)
-=================================
+Leadzai — Tracking Monitor (ENTERPRISE)
+======================================
 ✔ Suporta GTM + Consent Mode
 ✔ Aceita cookies automaticamente
-✔ Faz reload após consentimento (CRÍTICO)
-✔ Deteta tracking via network + DOM
-✔ Minimiza falsos negativos
+✔ Reload após consentimento
+✔ Espera eventos reais do GTM (não só existência)
+✔ Deteta via network + DOM
+✔ Minimiza falsos negativos (nível alto)
 """
 
 import csv
@@ -36,7 +37,6 @@ TRACKING_PATTERN = "adviocdn.net/cnv"
 
 GTM_TIMEOUT = 15000
 NAV_TIMEOUT = 20000
-POST_GTM_WAIT = 3000
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ def accept_cookies(page):
             except:
                 continue
 
-        # fallback JS (CMPs comuns)
+        # fallback JS (Cookiebot / OneTrust / genérico)
         page.evaluate("""
             () => {
                 if (window.Cookiebot) {
@@ -138,19 +138,17 @@ def check_site(browser, url):
     page.on("request", handle_request)
 
     try:
-        # 1. primeira navegação
+        # 1. load inicial
         page.goto(url, timeout=NAV_TIMEOUT, wait_until="domcontentloaded")
 
         # 2. aceitar cookies
         accept_cookies(page)
-
-        # 3. pequena espera
         page.wait_for_timeout(2000)
 
-        # 🔥 4. reload após consentimento (CRÍTICO)
+        # 3. reload (CRÍTICO)
         page.reload(wait_until="domcontentloaded")
 
-        # 5. esperar GTM após reload
+        # 4. esperar GTM existir
         try:
             page.wait_for_function(
                 "() => window.google_tag_manager && Object.keys(window.google_tag_manager).length > 0",
@@ -160,8 +158,28 @@ def check_site(browser, url):
         except PlaywrightTimeout:
             pass
 
-        # 6. esperar triggers do GTM
-        page.wait_for_timeout(POST_GTM_WAIT)
+        # 5. 🔥 esperar eventos reais do GTM (CRÍTICO)
+        try:
+            page.wait_for_function(
+                """
+                () => {
+                    if (!window.dataLayer) return false;
+                    return window.dataLayer.some(e => 
+                        e.event && (
+                            e.event.includes('gtm') ||
+                            e.event.includes('consent') ||
+                            e.event.includes('cookie')
+                        )
+                    );
+                }
+                """,
+                timeout=GTM_TIMEOUT,
+            )
+        except PlaywrightTimeout:
+            pass
+
+        # 6. esperar triggers async
+        page.wait_for_timeout(4000)
 
         # 7. fallback DOM check
         if not found:
@@ -207,8 +225,6 @@ def save_state(state):
 # ---------------------------------------------------------------------------
 def main():
     urls = get_urls()
-    previous = load_state()
-
     results = []
 
     with sync_playwright() as p:
