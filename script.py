@@ -34,7 +34,7 @@ for url in urls:
         r = requests.get(url, headers=headers, timeout=10)
         html = r.text
         
-        if "googletagmanager.com" not in html:
+        if "adviocdn.net" not in html:
             missing_gtm.add(url)
     
     except Exception as e:
