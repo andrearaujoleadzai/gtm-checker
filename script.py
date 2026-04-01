@@ -11,16 +11,21 @@ response = requests.get(SHEET_URL)
 response.raise_for_status()
 
 lines = response.text.splitlines()
-reader = csv.reader(lines)
+reader = csv.DictReader(lines)
 
-# se tiver header, ignora primeira linha
 urls = []
-for i, row in enumerate(reader):
-    if i == 0:
-        continue  # remove se não tiver header
+
+for row in reader:
+    website = row.get("website")
     
-    if row and row[0].startswith("http"):
-        urls.append(row[0].strip())
+    if website:
+        website = website.strip().lower()
+        
+        # adicionar https se não existir
+        if not website.startswith("http"):
+            website = "https://" + website
+        
+        urls.append(website)
 
 missing_gtm = set()
 
