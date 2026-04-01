@@ -2,7 +2,7 @@ name: Daily GTM Check
 
 on:
   schedule:
-    - cron: '0 7 * * *'  # corre todos os dias às 07:00 UTC
+    - cron: '0 7 * * *'
   workflow_dispatch:
 
 jobs:
@@ -18,8 +18,15 @@ jobs:
         with:
           python-version: '3.11'
 
+      # 👇 instalar dependências normais
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          pip install requests playwright
 
+      # 👇 instalar browsers do Playwright (IMPORTANTE)
+      - name: Install Playwright Browsers
+        run: playwright install
+
+      # 👇 correr script
       - name: Run script
         run: python script.py
