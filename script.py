@@ -1,12 +1,12 @@
 """
-Leadzai — Tracking Monitor (ENTERPRISE)
-======================================
+Leadzai — Tracking Monitor (BULLETPROOF)
+========================================
 ✔ Suporta GTM + Consent Mode
 ✔ Aceita cookies automaticamente
 ✔ Reload após consentimento
-✔ Espera eventos reais do GTM (não só existência)
+✔ Espera GTM + eventos reais
+✔ Simula interação do utilizador (CRÍTICO)
 ✔ Deteta via network + DOM
-✔ Minimiza falsos negativos (nível alto)
 """
 
 import csv
@@ -21,11 +21,8 @@ from urllib.parse import urlparse
 import requests
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-)
-log = logging.getLogger("tracking_monitor")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+log = logging.getLogger("monitor")
 
 SHEET_URL = os.getenv(
     "SHEET_URL",
@@ -35,8 +32,8 @@ SHEET_URL = os.getenv(
 STATE_FILE = Path("tracking_state.json")
 TRACKING_PATTERN = "adviocdn.net/cnv"
 
-GTM_TIMEOUT = 15000
 NAV_TIMEOUT = 20000
+GTM_TIMEOUT = 15000
 
 
 # ---------------------------------------------------------------------------
@@ -46,10 +43,10 @@ def get_urls():
     response = requests.get(SHEET_URL)
     response.raise_for_status()
 
+    reader = csv.DictReader(io.StringIO(response.text))
     seen = set()
     urls = []
 
-    reader = csv.DictReader(io.StringIO(response.text))
     for row in reader:
         website = row.get("website", "").strip().lower()
 
@@ -73,28 +70,28 @@ def get_urls():
 # COOKIE CONSENT
 # ---------------------------------------------------------------------------
 def accept_cookies(page):
+    selectors = [
+        "button:has-text('Accept')",
+        "button:has-text('I agree')",
+        "button:has-text('Agree')",
+        "button:has-text('Aceitar')",
+        "button:has-text('Aceito')",
+        "button:has-text('Aceptar')",
+        "button:has-text('Allow all')",
+    ]
+
+    for selector in selectors:
+        try:
+            btn = page.locator(selector).first
+            if btn.is_visible(timeout=2000):
+                btn.click()
+                page.wait_for_timeout(1000)
+                return True
+        except:
+            continue
+
+    # fallback
     try:
-        selectors = [
-            "button:has-text('Accept')",
-            "button:has-text('I agree')",
-            "button:has-text('Agree')",
-            "button:has-text('Aceitar')",
-            "button:has-text('Aceito')",
-            "button:has-text('Aceptar')",
-            "button:has-text('Allow all')",
-        ]
-
-        for selector in selectors:
-            try:
-                btn = page.locator(selector).first
-                if btn.is_visible(timeout=2000):
-                    btn.click()
-                    page.wait_for_timeout(1000)
-                    return True
-            except:
-                continue
-
-        # fallback JS (Cookiebot / OneTrust / genérico)
         page.evaluate("""
             () => {
                 if (window.Cookiebot) {
@@ -106,13 +103,28 @@ def accept_cookies(page):
                 document.cookie = "cookie_consent=true; path=/";
             }
         """)
-
         page.wait_for_timeout(1000)
-
     except:
         pass
 
     return False
+
+
+# ---------------------------------------------------------------------------
+# USER INTERACTION (CRÍTICO)
+# ---------------------------------------------------------------------------
+def simulate_user(page):
+    try:
+        page.mouse.move(100, 200)
+        page.mouse.wheel(0, 600)
+
+        page.wait_for_timeout(1000)
+
+        page.mouse.click(200, 300)
+
+        page.wait_for_timeout(2000)
+    except:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +160,10 @@ def check_site(browser, url):
         # 3. reload (CRÍTICO)
         page.reload(wait_until="domcontentloaded")
 
-        # 4. esperar GTM existir
+        # 4. simular interação
+        simulate_user(page)
+
+        # 5. esperar GTM existir
         try:
             page.wait_for_function(
                 "() => window.google_tag_manager && Object.keys(window.google_tag_manager).length > 0",
@@ -158,19 +173,13 @@ def check_site(browser, url):
         except PlaywrightTimeout:
             pass
 
-        # 5. 🔥 esperar eventos reais do GTM (CRÍTICO)
+        # 6. esperar eventos reais
         try:
             page.wait_for_function(
                 """
                 () => {
                     if (!window.dataLayer) return false;
-                    return window.dataLayer.some(e => 
-                        e.event && (
-                            e.event.includes('gtm') ||
-                            e.event.includes('consent') ||
-                            e.event.includes('cookie')
-                        )
-                    );
+                    return window.dataLayer.length > 0;
                 }
                 """,
                 timeout=GTM_TIMEOUT,
@@ -178,10 +187,10 @@ def check_site(browser, url):
         except PlaywrightTimeout:
             pass
 
-        # 6. esperar triggers async
+        # 7. espera extra para triggers
         page.wait_for_timeout(4000)
 
-        # 7. fallback DOM check
+        # 8. fallback DOM
         if not found:
             scripts = page.query_selector_all("script[src]")
             for s in scripts:
@@ -205,19 +214,6 @@ def check_site(browser, url):
         "error": error,
         "checked_at": datetime.now(timezone.utc).isoformat(),
     }
-
-
-# ---------------------------------------------------------------------------
-# STATE
-# ---------------------------------------------------------------------------
-def load_state():
-    if STATE_FILE.exists():
-        return json.load(open(STATE_FILE))
-    return {}
-
-
-def save_state(state):
-    json.dump(state, open(STATE_FILE, "w"), indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -245,8 +241,6 @@ def main():
                 log.info("   -> MISSING")
 
         browser.close()
-
-    save_state({r["url"]: r for r in results})
 
     missing = [
         r["url"]
